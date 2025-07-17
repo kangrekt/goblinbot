@@ -117,3 +117,10 @@ Jika bot ini membantumu, bantu dengan:
 * 📣 Share ke komunitas lain
 
 ---
+
+## 📢 Social
+
+Join Telegram: [https://t.me/ingpokanjepe](https://t.me/ingpokanjepe)
+
+---
+
