@@ -52,14 +52,6 @@ def get_session_tokens():
             return tokens
     return []
 
-    try:
-        response = requests.get(url, headers=headers, cookies=cookies)
-        response.raise_for_status()  # Raise exception jika status code tidak 200
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error: {e}")
-        return None
-
 def format_timestamp(timestamp_str):
     """Format timestamp dari API ke format lokal"""
     from datetime import datetime
@@ -89,36 +81,47 @@ def display_box_info(data, account_num):
     )
     console.print(box_info)
 
-def retry_on_failure(max_retries=5, delay=1):
-    """Decorator untuk melakukan retry pada fungsi yang gagal"""
+def retry_on_failure(max_retries=5, delay=1, exponential_backoff=True):
+    """Decorator untuk melakukan retry pada fungsi yang gagal dengan exponential backoff"""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             last_exception = None
+            current_delay = delay
+            account_num = args[0] if args and len(args) > 0 else 'Unknown'
+            
             for attempt in range(max_retries):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
                     last_exception = e
-                    account_num = args[0] if args and len(args) > 0 else 'Unknown'
                     if attempt < max_retries - 1:  # Don't sleep on the last attempt
-                        console.print(f"[yellow][AKUN {account_num}] Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {delay} seconds...[/yellow]")
-                        time.sleep(delay)
+                        # Print error message
+                        console.print(f"[yellow][AKUN {account_num}] Attempt {attempt + 1}/{max_retries} failed: {e}[/yellow]")
+                        
+                        # Calculate delay with exponential backoff if enabled
+                        if exponential_backoff:
+                            current_delay = min(30, delay * (2 ** attempt))  # Max delay 30 seconds
+                        
+                        # Print retry message
+                        console.print(f"[yellow][AKUN {account_num}] Retrying in {current_delay} seconds...[/yellow]")
+                        time.sleep(current_delay)
                     else:
                         console.print(f"[red][AKUN {account_num}] All {max_retries} attempts failed. Last error: {e}[/red]")
+                        # Return None or raise exception based on function's needs
                         return None
             return None
         return wrapper
     return decorator
 
-@retry_on_failure(max_retries=5, delay=1)
+@retry_on_failure(max_retries=5, delay=1, exponential_backoff=True)
 def complete_missions(account_num):
-    """Menyelesaikan misi menggunakan API"""
+    """Menyelesaikan misi menggunakan API dengan retry mechanism"""
     try:
         # Get box info
         data = make_api_request(account_num)
         if not data:
-            return
+            raise ValueError("Failed to get box information")
             
         # Display box info
         console.print(Panel(f"[bold]Processing Account {account_num}[/bold]", border_style="green"))
@@ -144,6 +147,9 @@ def complete_missions(account_num):
             
         # Complete mission
         tokens = get_session_tokens()
+        if not tokens or len(tokens) < account_num:
+            raise ValueError("Invalid account number or no tokens available")
+            
         token = tokens[account_num - 1]
         headers = {
             'accept': 'application/json, text/plain, */*',
@@ -161,15 +167,15 @@ def complete_missions(account_num):
             console.print(f"[yellow][AKUN {account_num}] No active box found, skipping mission completion[/yellow]")
             claim_prize(account_num)
         else:
-            console.print(f"[red][AKUN {account_num}] Gagal menyelesaikan misi: {response.status_code}[/red]")
-            console.print(f"[red]Error: {response.text}[/red]")
+            raise Exception(f"Failed to complete mission: {response.status_code} - {response.text}")
             
     except Exception as e:
         console.print(f"[red][AKUN {account_num}] Error: {e}[/red]")
+        raise
 
-@retry_on_failure(max_retries=5, delay=1)
+@retry_on_failure(max_retries=5, delay=1, exponential_backoff=True)
 def claim_prize(account_num):
-    """Mengklaim hadiah setelah misi berhasil"""
+    """Mengklaim hadiah setelah misi berhasil dengan retry mechanism"""
     try:
         tokens = get_session_tokens()
         if not tokens or len(tokens) < account_num:
@@ -202,18 +208,12 @@ def claim_prize(account_num):
             start_box(account_num)
         elif response.status_code == 400 and "No active box to open." in response.text:
             console.print(f"\n[AKUN {account_num}] No active box found, skipping prize claim")
-            console.print("Moving to next step...")
-            
-            # Langsung mulai box mining
-            start_box(account_num)
         else:
-            console.print("[red]=== ✗ GAGAL MENGKLAIM HADIAH ===[/red]")
-            console.print(f"[red]Status Code: {response.status_code}[/red]")
-            console.print(f"[red]Error: {response.text}[/red]")
+            raise Exception(f"Failed to claim prize: {response.status_code} - {response.text}")
             
-    except requests.exceptions.RequestException as e:
-        console.print("[red]=== ERROR ===[/red]")
-        console.print(f"[red]Error: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red][AKUN {account_num}] Error claiming prize: {e}[/red]")
+        raise
 
 @retry_on_failure(max_retries=5, delay=1)
 def start_box(account_num):
@@ -280,7 +280,7 @@ def countdown_timer(duration_seconds, account_num=None):
             loading_char = loading_chars[loading_index % len(loading_chars)]
             loading_index += 1
             
-            progress.update(task, description=f"Time remaining: {hours:02d}:{minutes:02d}:{seconds:02d} {loading_char}")
+            progress.update(task, description=f"Memproses Akun berikutnya: {hours:02d}:{minutes:02d}:{seconds:02d} {loading_char}")
             time.sleep(1)
             duration_seconds -= 1
 
